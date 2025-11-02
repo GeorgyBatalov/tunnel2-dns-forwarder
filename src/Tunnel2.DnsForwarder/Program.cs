@@ -33,6 +33,7 @@ public class Program
         builder.Services.AddSingleton<IDnsCacheService, DnsCacheService>();
         builder.Services.AddSingleton<IRateLimiter, RateLimiterService>();
         builder.Services.AddSingleton<IUpstreamDnsClient, UpstreamDnsClient>();
+        builder.Services.AddSingleton<IHealthCheckService, HealthCheckService>();
 
         // Главный background service
         builder.Services.AddHostedService<DnsForwarderService>();

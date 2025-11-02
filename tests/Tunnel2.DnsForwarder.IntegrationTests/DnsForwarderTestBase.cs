@@ -80,6 +80,7 @@ public abstract class DnsForwarderTestBase : IAsyncDisposable
         builder.Services.AddSingleton<IDnsCacheService, DnsCacheService>();
         builder.Services.AddSingleton<IRateLimiter, RateLimiterService>();
         builder.Services.AddSingleton<IUpstreamDnsClient, UpstreamDnsClient>();
+        builder.Services.AddSingleton<IHealthCheckService, HealthCheckService>();
         builder.Services.AddHostedService<DnsForwarderService>();
 
         return builder.Build();

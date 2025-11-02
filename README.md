@@ -24,7 +24,7 @@ Lightweight DNS forwarder/secondary DNS server with caching and DDoS protection 
 
 ```
 ┌─────────────┐      UDP Query      ┌──────────────────┐
-│  DNS Client │ ─────────────────> │  DNS Forwarder   │
+│  DNS Client │ ─────────────────>  │  DNS Forwarder   │
 │   (User)    │                     │   (This Service) │
 └─────────────┘                     └──────────────────┘
                                             │
@@ -182,12 +182,13 @@ The project includes comprehensive test coverage:
   - DnsCacheService tests
   - RateLimiterService tests
 
-- **Integration Tests** (9 tests): End-to-end scenarios
-  - DNS query forwarding
+- **Integration Tests** (17 tests): End-to-end scenarios
+  - DNS query forwarding (6 tests)
   - Cache hit/miss scenarios
   - Negative response caching
   - Concurrent request handling
-  - Rate limiting enforcement
+  - Rate limiting enforcement (3 tests)
+  - Health check functionality (8 tests)
 
 ### Run Tests
 
@@ -202,7 +203,7 @@ dotnet test tests/Tunnel2.DnsForwarder.UnitTests
 dotnet test tests/Tunnel2.DnsForwarder.IntegrationTests
 ```
 
-**Current Status**: ✅ 19/19 tests passing (100%)
+**Current Status**: ✅ 27/27 tests passing (100%)
 
 ## Performance Characteristics
 
@@ -274,15 +275,80 @@ sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
 
 ### Health Checks
 
-Send a test DNS query:
+DNS Forwarder поддерживает health check через специальные DNS запросы. **Не требуется отдельный HTTP порт!**
+
+#### Стандартные health check домены:
+- `health.check`
+- `_health`
+- `health`
+- `healthcheck`
+
+#### Примеры использования:
 
 ```bash
 # Using dig
-dig @localhost example.com A
+dig @localhost health.check A
 
 # Using nslookup
-nslookup example.com localhost
+nslookup health.check localhost
+
+# С конкретным портом
+dig @localhost -p 53 health.check A
 ```
+
+**Ожидаемый ответ:**
+- Status: `NOERROR`
+- A record: `127.0.0.1` (по умолчанию, настраивается через `HealthCheckIpAddress`)
+- TTL: 1 секунда
+
+#### Docker Compose health check:
+
+```yaml
+services:
+  dns-forwarder:
+    image: tunnel2-dns-forwarder:latest
+    healthcheck:
+      test: ["CMD", "dig", "@127.0.0.1", "health.check", "A", "+short"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+```
+
+#### Kubernetes liveness probe:
+
+```yaml
+livenessProbe:
+  exec:
+    command:
+    - /bin/sh
+    - -c
+    - 'dig @127.0.0.1 health.check A +short | grep -q "127.0.0.1"'
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+```
+
+#### Особенности health check:
+- ✅ Работает на том же DNS порту (не нужен отдельный HTTP порт)
+- ✅ Не форвардится к upstream DNS
+- ✅ Не кэшируется (всегда fresh response)
+- ✅ Короткий TTL (1 секунда)
+- ✅ Не учитывается в rate limiting
+- ✅ Поддерживает любые поддомены (например, `test.health.check`)
+
+#### Настройка в appsettings.json:
+
+```json
+{
+  "DnsForwarder": {
+    "HealthCheckIpAddress": "127.0.0.1"
+  }
+}
+```
+
+Вы можете изменить IP адрес, который возвращается в health check ответах, установив `HealthCheckIpAddress`. Это полезно для мониторинга в сложных сетевых конфигурациях.
 
 ## Troubleshooting
 

@@ -39,4 +39,9 @@ public sealed class DnsForwarderOptions
     /// Количество retry попыток к upstream DNS
     /// </summary>
     public int UpstreamRetryCount { get; set; } = 2;
+
+    /// <summary>
+    /// IP адрес для health check ответов (127.0.0.1 по умолчанию)
+    /// </summary>
+    public string HealthCheckIpAddress { get; set; } = "127.0.0.1";
 }

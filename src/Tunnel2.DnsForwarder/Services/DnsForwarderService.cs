@@ -21,6 +21,7 @@ public sealed class DnsForwarderService : BackgroundService
     private readonly IDnsCacheService _cacheService;
     private readonly IRateLimiter _rateLimiter;
     private readonly IUpstreamDnsClient _upstreamClient;
+    private readonly IHealthCheckService _healthCheckService;
     private UdpClient? _udpListener;
 
     public DnsForwarderService(
@@ -28,13 +29,15 @@ public sealed class DnsForwarderService : BackgroundService
         IOptionsMonitor<DnsForwarderOptions> dnsForwarderOptionsMonitor,
         IDnsCacheService cacheService,
         IRateLimiter rateLimiter,
-        IUpstreamDnsClient upstreamClient)
+        IUpstreamDnsClient upstreamClient,
+        IHealthCheckService healthCheckService)
     {
         _logger = logger;
         _dnsForwarderOptionsMonitor = dnsForwarderOptionsMonitor;
         _cacheService = cacheService;
         _rateLimiter = rateLimiter;
         _upstreamClient = upstreamClient;
+        _healthCheckService = healthCheckService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -111,12 +114,27 @@ public sealed class DnsForwarderService : BackgroundService
             }
 
             Question question = request.Questions[0];
-            string cacheKey = BuildCacheKey(question);
+            string hostname = question.Name.ToString().TrimEnd('.');
 
             _logger.LogDebug("DNS query from {ClientIp}: {Name} {Type}",
                 clientEndpoint.Address, question.Name, question.Type);
 
+            // 0. Health check запрос
+            if (_healthCheckService.IsHealthCheckQuery(hostname))
+            {
+                _logger.LogInformation("Health check query from {ClientIp}: {Name}",
+                    clientEndpoint.Address, hostname);
+
+                byte[] healthResponse = CreateHealthCheckResponse(request);
+                if (_udpListener != null)
+                {
+                    await _udpListener.SendAsync(healthResponse, healthResponse.Length, clientEndpoint);
+                }
+                return;
+            }
+
             // 1. Проверяем кэш
+            string cacheKey = BuildCacheKey(question);
             CachedDnsResponse? cachedResponse = _cacheService.Get(cacheKey);
 
             byte[]? responseData;
@@ -180,6 +198,35 @@ public sealed class DnsForwarderService : BackgroundService
         {
             _logger.LogError(exception, "Error handling DNS request from {ClientIp}", clientEndpoint.Address);
         }
+    }
+
+    private byte[] CreateHealthCheckResponse(Message request)
+    {
+        DnsForwarderOptions options = _dnsForwarderOptionsMonitor.CurrentValue;
+        Message response = request.CreateResponse();
+
+        Question question = request.Questions[0];
+
+        // Возвращаем A запись с configured IP адресом для health check
+        if (question.Type == DnsType.A)
+        {
+            ARecord aRecord = new ARecord
+            {
+                Name = question.Name,
+                Address = IPAddress.Parse(options.HealthCheckIpAddress),
+                TTL = TimeSpan.FromSeconds(1) // Короткий TTL для health check
+            };
+
+            response.Answers.Add(aRecord);
+            response.Status = MessageStatus.NoError;
+        }
+        else
+        {
+            // Для других типов запросов возвращаем пустой успешный ответ
+            response.Status = MessageStatus.NoError;
+        }
+
+        return response.ToByteArray();
     }
 
     private static string BuildCacheKey(Question question)

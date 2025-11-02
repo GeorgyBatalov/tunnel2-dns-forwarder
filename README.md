@@ -277,6 +277,16 @@ sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
 
 DNS Forwarder поддерживает health check через специальные DNS запросы. **Не требуется отдельный HTTP порт!**
 
+#### Как это работает:
+
+**Forwarder делегирует health check к Primary DNS Server:**
+- Forwarder распознает health check запросы по специальным доменам
+- Форвардит их к Primary DNS (tunnel2-dns-server)
+- Primary DNS сам проверяет свою инфраструктуру (БД, RabbitMQ, кэш и т.д.)
+- Возвращает реальный статус всей системы
+
+Это позволяет Primary DNS самому решать какие компоненты проверять и как определять healthy status.
+
 #### Стандартные health check домены:
 - `health.check`
 - `_health`
@@ -292,14 +302,15 @@ dig @localhost health.check A
 # Using nslookup
 nslookup health.check localhost
 
-# С конкретным портом
-dig @localhost -p 53 health.check A
+# С конкретным портом (если forwarder не на 53)
+dig @localhost -p 15053 health.check A
 ```
 
-**Ожидаемый ответ:**
-- Status: `NOERROR`
-- A record: `127.0.0.1` (по умолчанию, настраивается через `HealthCheckIpAddress`)
-- TTL: 1 секунда
+**Ожидаемый ответ (от Primary DNS):**
+- Status: `NOERROR` если Primary DNS healthy
+- Status: `SERVFAIL` если Primary DNS имеет проблемы
+- A record: настраивается на стороне Primary DNS
+- TTL: настраивается на стороне Primary DNS
 
 #### Docker Compose health check:
 
@@ -308,11 +319,11 @@ services:
   dns-forwarder:
     image: tunnel2-dns-forwarder:latest
     healthcheck:
-      test: ["CMD", "dig", "@127.0.0.1", "health.check", "A", "+short"]
+      test: ["CMD", "sh", "-c", "dig @127.0.0.1 health.check A +short || exit 1"]
       interval: 30s
-      timeout: 3s
+      timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 10s
 ```
 
 #### Kubernetes liveness probe:
@@ -323,32 +334,22 @@ livenessProbe:
     command:
     - /bin/sh
     - -c
-    - 'dig @127.0.0.1 health.check A +short | grep -q "127.0.0.1"'
-  initialDelaySeconds: 5
-  periodSeconds: 10
-  timeoutSeconds: 3
+    - 'dig @127.0.0.1 health.check A +short || exit 1'
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
   failureThreshold: 3
 ```
 
 #### Особенности health check:
 - ✅ Работает на том же DNS порту (не нужен отдельный HTTP порт)
-- ✅ Не форвардится к upstream DNS
-- ✅ Не кэшируется (всегда fresh response)
-- ✅ Короткий TTL (1 секунда)
-- ✅ Не учитывается в rate limiting
+- ✅ **Делегируется к Primary DNS** - он сам проверяет БД, RabbitMQ, кэш
+- ✅ Форвардится как обычный DNS запрос (проверяет всю цепочку)
+- ✅ Primary DNS решает что проверять и как отвечать
 - ✅ Поддерживает любые поддомены (например, `test.health.check`)
+- ✅ Единая точка истины для health status всей инфраструктуры
 
-#### Настройка в appsettings.json:
-
-```json
-{
-  "DnsForwarder": {
-    "HealthCheckIpAddress": "127.0.0.1"
-  }
-}
-```
-
-Вы можете изменить IP адрес, который возвращается в health check ответах, установив `HealthCheckIpAddress`. Это полезно для мониторинга в сложных сетевых конфигурациях.
+**Примечание:** Для того чтобы health check работал полноценно, Primary DNS Server (tunnel2-dns-server) должен обрабатывать эти домены и возвращать реальный health status своей инфраструктуры.
 
 ## Troubleshooting
 

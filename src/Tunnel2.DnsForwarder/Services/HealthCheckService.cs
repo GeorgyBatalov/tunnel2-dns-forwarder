@@ -7,7 +7,7 @@ namespace Tunnel2.DnsForwarder.Services;
 
 /// <summary>
 /// Health check через специальные DNS запросы
-/// Отвечает на запросы к health.check, _health, или настроенному домену
+/// Делегирует health check к primary DNS server, который сам проверяет свою инфраструктуру
 /// </summary>
 public sealed class HealthCheckService : IHealthCheckService
 {
@@ -54,6 +54,8 @@ public sealed class HealthCheckService : IHealthCheckService
 
     public HealthStatus GetHealthStatus()
     {
+        // Простой статус - форвардер сам по себе работает
+        // Реальную проверку делает primary DNS server
         return new HealthStatus
         {
             IsHealthy = true,

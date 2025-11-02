@@ -119,18 +119,12 @@ public sealed class DnsForwarderService : BackgroundService
             _logger.LogDebug("DNS query from {ClientIp}: {Name} {Type}",
                 clientEndpoint.Address, question.Name, question.Type);
 
-            // 0. Health check запрос
+            // 0. Health check запрос - форвардим к primary DNS (он сам решает что проверять)
             if (_healthCheckService.IsHealthCheckQuery(hostname))
             {
-                _logger.LogInformation("Health check query from {ClientIp}: {Name}",
+                _logger.LogInformation("Health check query from {ClientIp}: {Name}, forwarding to primary DNS",
                     clientEndpoint.Address, hostname);
-
-                byte[] healthResponse = CreateHealthCheckResponse(request);
-                if (_udpListener != null)
-                {
-                    await _udpListener.SendAsync(healthResponse, healthResponse.Length, clientEndpoint);
-                }
-                return;
+                // Продолжаем обработку как обычный запрос - он уйдет к primary DNS
             }
 
             // 1. Проверяем кэш
@@ -198,35 +192,6 @@ public sealed class DnsForwarderService : BackgroundService
         {
             _logger.LogError(exception, "Error handling DNS request from {ClientIp}", clientEndpoint.Address);
         }
-    }
-
-    private byte[] CreateHealthCheckResponse(Message request)
-    {
-        DnsForwarderOptions options = _dnsForwarderOptionsMonitor.CurrentValue;
-        Message response = request.CreateResponse();
-
-        Question question = request.Questions[0];
-
-        // Возвращаем A запись с configured IP адресом для health check
-        if (question.Type == DnsType.A)
-        {
-            ARecord aRecord = new ARecord
-            {
-                Name = question.Name,
-                Address = IPAddress.Parse(options.HealthCheckIpAddress),
-                TTL = TimeSpan.FromSeconds(1) // Короткий TTL для health check
-            };
-
-            response.Answers.Add(aRecord);
-            response.Status = MessageStatus.NoError;
-        }
-        else
-        {
-            // Для других типов запросов возвращаем пустой успешный ответ
-            response.Status = MessageStatus.NoError;
-        }
-
-        return response.ToByteArray();
     }
 
     private static string BuildCacheKey(Question question)

@@ -41,9 +41,33 @@ public sealed class UpstreamDnsClient : IUpstreamDnsClient, IDisposable
             return null;
         }
 
-        IPEndPoint upstreamEndpoint = new IPEndPoint(
-            IPAddress.Parse(options.UpstreamDnsAddress),
-            options.UpstreamDnsPort);
+        // Resolve hostname to IP address (supports both IP and hostname)
+        IPAddress upstreamIpAddress;
+        if (!IPAddress.TryParse(options.UpstreamDnsAddress, out upstreamIpAddress!))
+        {
+            // If not an IP address, try to resolve hostname
+            try
+            {
+                IPAddress[] addresses = await Dns.GetHostAddressesAsync(options.UpstreamDnsAddress, cancellationToken);
+                if (addresses.Length == 0)
+                {
+                    _logger.LogError("Failed to resolve upstream DNS hostname: {Hostname}", options.UpstreamDnsAddress);
+                    Interlocked.Increment(ref _totalFailures);
+                    return null;
+                }
+                upstreamIpAddress = addresses[0]; // Use first resolved address
+                _logger.LogDebug("Resolved upstream DNS hostname {Hostname} to {IpAddress}",
+                    options.UpstreamDnsAddress, upstreamIpAddress);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Failed to resolve upstream DNS hostname: {Hostname}", options.UpstreamDnsAddress);
+                Interlocked.Increment(ref _totalFailures);
+                return null;
+            }
+        }
+
+        IPEndPoint upstreamEndpoint = new IPEndPoint(upstreamIpAddress, options.UpstreamDnsPort);
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         Interlocked.Increment(ref _totalRequests);
